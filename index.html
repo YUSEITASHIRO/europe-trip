@@ -76,6 +76,7 @@ main{max-width:980px;margin:0 auto;padding:16px 16px 48px;perspective:1600px}
 .seg button{border:1px solid var(--leather);background:#fffaf0;color:var(--leather);border-radius:16px;padding:5px 12px;font-size:13px}
 .seg button.on{background:var(--leather);color:var(--tag)}
 .who{display:inline-block;font-size:10px;color:#fff;background:#2f5d8a;border-radius:8px;padding:1px 6px;margin-right:4px;vertical-align:1px}
+.burden{margin-top:6px;font-size:13px}.burden tr.me td{font-weight:700}
 .whos{display:flex;gap:14px;flex-wrap:wrap;font-size:14px}
 .whos input{width:18px;height:18px;accent-color:var(--leather);vertical-align:-3px}
 .chip+.chip{margin-top:4px}
@@ -220,7 +221,14 @@ const CURS = ["EUR", "GBP", "JPY", "CHF", "CZK", "USD"];
 const toEUR = (a, c) => fx && fx.rates[c] ? a / fx.rates[c] : (c === "EUR" ? a : NaN);
 const eur = v => isNaN(v) ? "—" : "€" + v.toLocaleString("ja-JP", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const yen = v => fx && !isNaN(v) ? Math.round(v * fx.rates.JPY).toLocaleString("ja-JP") + "円" : "—";
-const sumEUR = d => arr(d.costs).reduce((s, c) => s + toEUR(+c.amount || 0, c.cur || "EUR"), 0);
+// 費用1件: who = 負担する人（空 = 全員）、per = true なら金額は1人あたり、false なら負担者で割る合計
+const payers = c => arr(c.who).length ? arr(c.who) : arr(trip.members);
+const totalEUR = c => toEUR(+c.amount || 0, c.cur || "EUR") * (c.per ? payers(c).length : 1);
+const shareEUR = (c, m) => payers(c).includes(m) ? toEUR(+c.amount || 0, c.cur || "EUR") / (c.per ? 1 : payers(c).length) : 0;
+const sumEUR = (d, m) => arr(d.costs).reduce((s, c) => s + (m ? shareEUR(c, m) : totalEUR(c)), 0);
+// 1人の負担を「個人の支出（1人あたりの金額・1人だけの費用）」と「合計を割った分」に分ける
+const burden = m => days().flatMap(d => arr(d.costs)).reduce((b, c) => {
+  const v = shareEUR(c, m); c.per || payers(c).length === 1 ? b.own += v : b.split += v; return b; }, { own: 0, split: 0 });
 
 // ---------- 表示の部品 ----------
 const days = () => Object.entries(trip.days || {}).map(([id, d]) => ({ id, ...d })).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -250,13 +258,17 @@ function render() {
   document.title = $("#title").textContent = trip.title || "旅";
   $("#range").textContent = ds.length ? `${ds[0].date.replaceAll("-", "/")} – ${md(ds.at(-1))}（${ds.length}日）` : "";
   const tot = ds.reduce((s, d) => s + sumEUR(d), 0);
-  $("#total").innerHTML = `費用合計 <b>${eur(tot)}</b>（約${yen(tot)}）<div class="sub">${fx ? `1€ = ${fx.rates.JPY}円（欧州中央銀行 ${fx.date} 時点）` : "為替レート取得中"}</div>`;
+  $("#total").innerHTML = `費用合計（全員分） <b>${eur(tot)}</b>（約${yen(tot)}）
+    <table class="rows-t burden"><tr><td></td><td class="n">個人の支出</td><td class="n">合計を割った分</td><td class="n">1人の負担</td></tr>
+    ${arr(trip.members).map(m => { const b = burden(m); return `<tr class="${m === me ? "me" : ""}"><td>${esc(m)}</td>
+      <td class="n">${eur(b.own)}</td><td class="n">${eur(b.split)}</td><td class="n"><b>${eur(b.own + b.split)}</b><br>約${yen(b.own + b.split)}</td></tr>`; }).join("")}</table>
+    <div class="sub">${fx ? `1€ = ${fx.rates.JPY}円（欧州中央銀行 ${fx.date} 時点）` : "為替レート取得中"}</div>`;
   $("#seg").innerHTML = ["", ...arr(trip.members)].map(m => `<button data-me="${esc(m)}" class="${m === me ? "on" : ""}">${m ? esc(m) : "全員"}</button>`).join("");
   $("#days").innerHTML = ds.map(d => `
     <button class="day" data-id="${d.id}">
       <div class="date"><div class="md">${md(d)}</div><div class="wd">(${wd(d)})</div></div>
       <div><div class="area">${esc(d.area)}</div>${legsHTML(d)}${d.note ? `<div class="note">${esc(d.note)}</div>` : ""}
-        ${arr(d.costs).length ? `<div class="cost">${eur(sumEUR(d))}（約${yen(sumEUR(d))}）</div>` : ""}</div>
+        ${arr(d.costs).length ? `<div class="cost">${me ? `${esc(me)}の負担 ${eur(sumEUR(d, me))}（約${yen(sumEUR(d, me))}）／全員分 ` : ""}${eur(sumEUR(d))}（約${yen(sumEUR(d))}）</div>` : ""}</div>
       <div>${staysOf(d).map(s => `<span class="chip">${stayHTML(s)}</span>`).join("") || `<span class="empty">—</span>`}</div>
       <div class="chev">›</div>
     </button>`).join("") || `<p class="empty" style="text-align:center">日程がありません</p>`;
@@ -311,10 +323,11 @@ function viewDay(id) {
     <h3>行く場所・予定</h3>${listHTML(d.plan)}
     <h3>食べるもの</h3>${listHTML(d.food)}
     <h3>観光名所</h3>${listHTML(d.sights)}
-    <h3>費用</h3>${costs.length ? `<table class="rows-t">${costs.map(c => `<tr><td>${esc(c.label)}</td>
-      <td class="n">${c.cur && c.cur !== "EUR" ? `${(+c.amount).toLocaleString("ja-JP")} ${esc(c.cur)} → ` : ""}${eur(toEUR(+c.amount || 0, c.cur || "EUR"))}</td>
-      <td class="n">約${yen(toEUR(+c.amount || 0, c.cur || "EUR"))}</td></tr>`).join("")}
-      <tr><td><b>合計</b></td><td class="n"><b>${eur(sumEUR(d))}</b></td><td class="n"><b>約${yen(sumEUR(d))}</b></td></tr></table>` : `<p class="empty">未記入</p>`}
+    <h3>費用</h3>${costs.length ? `<table class="rows-t"><tr><td></td><td class="n">全員分</td><td class="n">負担する人と1人分</td></tr>${costs.map(c => `<tr><td>${esc(c.label)}</td>
+      <td class="n">${c.cur && c.cur !== "EUR" ? `${(+c.amount).toLocaleString("ja-JP")} ${esc(c.cur)}${c.per ? "×" + payers(c).length + "人" : ""} → ` : c.per ? `€${+c.amount}×${payers(c).length}人 → ` : ""}${eur(totalEUR(c))}<br>約${yen(totalEUR(c))}</td>
+      <td class="n">${payers(c).map(esc).join("・")}<br>${eur(shareEUR(c, payers(c)[0]))}（約${yen(shareEUR(c, payers(c)[0]))}）</td></tr>`).join("")}
+      <tr><td><b>合計</b></td><td class="n"><b>${eur(sumEUR(d))}</b><br>約${yen(sumEUR(d))}</td>
+      <td class="n">${arr(trip.members).map(m => `${esc(m)} ${eur(sumEUR(d, m))}`).join("<br>")}</td></tr></table>` : `<p class="empty">未記入</p>`}
     <h3>リンク</h3>${listHTML(d.links, "なし")}
     ${mapHTML(d.map || d.area)}`,
     `<button class="btn" id="toEdit">✎ 編集</button>`, id);
@@ -354,11 +367,14 @@ const stayForm = (s = {}) => `
     ${whoForm(s)}
   </div>`;
 const costForm = (c = {}) => `
-  <div class="grid3 cost-f">
+  <div class="box cost-f"><div class="grid3">
     <input class="in" data-k="label" value="${esc(c.label)}" placeholder="内容（例: 大英博物館）">
     <input class="in" data-k="amount" type="number" step="0.01" inputmode="decimal" value="${esc(c.amount)}" placeholder="金額">
     <select class="in" data-k="cur">${[...new Set([c.cur || "EUR", ...CURS])].map(x => `<option ${x === (c.cur || "EUR") ? "selected" : ""}>${x}</option>`).join("")}</select>
     <button class="rm" data-rm aria-label="この費用を削除">×</button>
+  </div>
+    <select class="in" data-k="per"><option value="">この金額は合計（負担する人で割る）</option><option value="1" ${c.per ? "selected" : ""}>この金額は1人あたり（負担する人それぞれが払う）</option></select>
+    ${whoForm(c).replace("誰の予定か", "負担する人（1人だけなら、その人だけの支出）")}
   </div>`;
 const linesOf = a => esc(arr(a).map(toLine).join("\n"));
 
@@ -405,7 +421,8 @@ function editDay(id, d, isNew = false) {
       legs: [...sh.querySelectorAll(".leg-f")].map(b => ({ id: b.dataset.id || uid(), mode: b.querySelector('[data-k="mode"]').value, from: pt(b, "from"), to: pt(b, "to"), note: b.querySelector('[data-k="note"]').value.trim(), who: whoOf(b) })),
       stays: [...sh.querySelectorAll(".stay-f")].map(b => ({ ...Object.fromEntries(["name", "kind", "in", "out", "url"].map(k => [k, b.querySelector(`[data-k="${k}"]`).value.trim()])), who: whoOf(b) })).filter(s => s.name),
       plan: lines("#e-plan"), food: lines("#e-food"), sights: lines("#e-sights"), links: lines("#e-links"),
-      costs: [...sh.querySelectorAll(".cost-f")].map(r => ({ label: r.querySelector('[data-k="label"]').value.trim(), amount: +r.querySelector('[data-k="amount"]').value || 0, cur: r.querySelector('[data-k="cur"]').value })).filter(c => c.label || c.amount),
+      costs: [...sh.querySelectorAll(".cost-f")].map(r => ({ label: r.querySelector('[data-k="label"]').value.trim(), amount: +r.querySelector('[data-k="amount"]').value || 0, cur: r.querySelector('[data-k="cur"]').value,
+        per: !!r.querySelector('[data-k="per"]').value, who: whoOf(r) })).filter(c => c.label || c.amount),
     };
     if (!v.date) return alert("日付を入れてください");
     $("#saveDay").disabled = true;
