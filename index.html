@@ -226,9 +226,9 @@ const payers = c => arr(c.who).length ? arr(c.who) : arr(trip.members);
 const totalEUR = c => toEUR(+c.amount || 0, c.cur || "EUR") * (c.per ? payers(c).length : 1);
 const shareEUR = (c, m) => payers(c).includes(m) ? toEUR(+c.amount || 0, c.cur || "EUR") / (c.per ? 1 : payers(c).length) : 0;
 const sumEUR = (d, m) => arr(d.costs).reduce((s, c) => s + (m ? shareEUR(c, m) : totalEUR(c)), 0);
-// 1人の負担を「個人の支出（1人あたりの金額・1人だけの費用）」と「合計を割った分」に分ける
+// 1人の負担を「全員共通の分」（負担する人が全員の費用）と「個人の支出」（それ以外）に分ける
 const burden = m => days().flatMap(d => arr(d.costs)).reduce((b, c) => {
-  const v = shareEUR(c, m); c.per || payers(c).length === 1 ? b.own += v : b.split += v; return b; }, { own: 0, split: 0 });
+  const v = shareEUR(c, m); payers(c).length < arr(trip.members).length ? b.own += v : b.split += v; return b; }, { own: 0, split: 0 });
 
 // ---------- 表示の部品 ----------
 const days = () => Object.entries(trip.days || {}).map(([id, d]) => ({ id, ...d })).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -259,7 +259,7 @@ function render() {
   $("#range").textContent = ds.length ? `${ds[0].date.replaceAll("-", "/")} – ${md(ds.at(-1))}（${ds.length}日）` : "";
   const tot = ds.reduce((s, d) => s + sumEUR(d), 0);
   $("#total").innerHTML = `費用合計（全員分） <b>${eur(tot)}</b>（約${yen(tot)}）
-    <table class="rows-t burden"><tr><td></td><td class="n">個人の支出</td><td class="n">合計を割った分</td><td class="n">1人の負担</td></tr>
+    <table class="rows-t burden"><tr><td></td><td class="n">個人の支出</td><td class="n">${arr(trip.members).length}人共通の分</td><td class="n">1人の負担</td></tr>
     ${arr(trip.members).map(m => { const b = burden(m); return `<tr class="${m === me ? "me" : ""}"><td>${esc(m)}</td>
       <td class="n">${eur(b.own)}</td><td class="n">${eur(b.split)}</td><td class="n"><b>${eur(b.own + b.split)}</b><br>約${yen(b.own + b.split)}</td></tr>`; }).join("")}</table>
     <div class="sub">${fx ? `1€ = ${fx.rates.JPY}円（欧州中央銀行 ${fx.date} 時点）` : "為替レート取得中"}</div>`;
